@@ -30,8 +30,8 @@ from categories import (
 
 OUTPUT_PATH    = "benchmark.jsonl"
 TEACHER_MODEL  = "hosted_vllm/gpt-oss-120b"
-PER_CATEGORY   = 250          # target positives per real category
-TARGET_OTHER   = 250          # quota of OTHER docs
+PER_CATEGORY   = 500          # target positives per real category
+TARGET_OTHER   = 500          # quota of OTHER docs
 NUM_THREADS    = 20
 
 client = OpenAI(
