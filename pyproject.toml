@@ -8,4 +8,5 @@ dependencies = [
     "datasets>=4.8.5",
     "openai>=2.38.0",
     "scikit-learn>=1.8.0",
+    "pandas>=2.0.0",
 ]
