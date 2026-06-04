@@ -105,9 +105,28 @@ def run_binary(model: str, text: str) -> tuple[str, float, dict]:
     return pred, total_lat, raw_decisions
 
 
+def preflight(models):
+    """Ping each model once; drop any that are inaccessible so a bad name
+    doesn't burn 2000 calls per model before failing."""
+    ok = []
+    for model in models:
+        try:
+            run_multiclass(model, "Test.")
+            ok.append(model)
+            print(f"  [ok]   {model}")
+        except Exception as e:
+            print(f"  [SKIP] {model}: {str(e)[:160]}")
+    return ok
+
+
 def main():
     with open(INPUT_PATH, "r", encoding="utf-8") as fin:
         rows = [json.loads(line) for line in fin if line.strip()]
+
+    print("Pre-flight model check...")
+    models = preflight(MODELS)
+    if not models:
+        raise SystemExit("No accessible models. Check names / allowlist.")
 
     # Resume support: load already-written rows keyed by id.
     existing = {}
@@ -126,7 +145,7 @@ def main():
             out_rows.append(row)
             continue
 
-        for model in MODELS:
+        for model in models:
             m = safe_name(model)
 
             mc_pred_key = f"{m}__multiclass_pred"
