@@ -31,6 +31,7 @@ from categories import (
     binary_system_prompt,
     parse_multiclass_label,
     parse_binary_label,
+    message_text,
 )
 
 INPUT_PATH  = "benchmark.jsonl"
@@ -78,9 +79,9 @@ def call(model: str, system: str, text: str) -> tuple[str, float]:
             {"role": "user", "content": text[:4000]},
         ],
         temperature=0.0,
-        max_tokens=50,
+        max_tokens=2048,
     )
-    return (resp.choices[0].message.content or ""), (time.time() - t0)
+    return message_text(resp.choices[0].message), (time.time() - t0)
 
 
 def run_multiclass(model: str, text: str) -> tuple[str, float]:

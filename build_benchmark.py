@@ -26,6 +26,7 @@ from categories import (
     OTHER,
     multiclass_system_prompt,
     parse_multiclass_label,
+    message_text,
 )
 
 OUTPUT_PATH    = "benchmark.jsonl"
@@ -64,10 +65,10 @@ def classify_and_store(doc):
                 {"role": "user", "content": text[:4000]},
             ],
             temperature=0.0,
-            max_tokens=50,
+            max_tokens=2048,
         )
         elapsed = time.time() - start
-        label = parse_multiclass_label(resp.choices[0].message.content)
+        label = parse_multiclass_label(message_text(resp.choices[0].message))
     except Exception as e:
         print(f"Error on id={doc.get('id')}: {e}")
         return None

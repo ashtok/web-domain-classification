@@ -19,7 +19,12 @@ import time
 
 from openai import OpenAI
 
-from categories import multiclass_system_prompt, parse_multiclass_label, MULTICLASS_LABELS
+from categories import (
+    multiclass_system_prompt,
+    parse_multiclass_label,
+    message_text,
+    MULTICLASS_LABELS,
+)
 
 INPUT_PATH       = "benchmark.jsonl"
 OUTPUT_PATH      = "benchmark_teacher_validation.jsonl"
@@ -47,9 +52,9 @@ def label(model: str, text: str) -> str:
             {"role": "user", "content": text[:4000]},
         ],
         temperature=0.0,
-        max_tokens=50,
+        max_tokens=2048,
     )
-    return parse_multiclass_label(resp.choices[0].message.content)
+    return parse_multiclass_label(message_text(resp.choices[0].message))
 
 
 def preflight(models):

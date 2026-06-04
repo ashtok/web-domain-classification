@@ -106,23 +106,70 @@ def binary_system_prompt(category: str) -> str:
     )
 
 
+def message_text(msg) -> str:
+    """Best label-bearing text from a chat message.
+
+    Reasoning models (e.g. Qwen3.x) return content=None and put everything in
+    `reasoning_content`; the final label is at the END of that reasoning. So we
+    prefer content, else fall back to the TAIL of the reasoning trace.
+    """
+    content = (getattr(msg, "content", None) or "").strip()
+    if content:
+        return content
+    reasoning = getattr(msg, "reasoning_content", None) or ""
+    if not reasoning:
+        psf = getattr(msg, "provider_specific_fields", None)
+        if isinstance(psf, dict):
+            reasoning = (
+                psf.get("reasoning_content")
+                or psf.get("reasoning")
+                or psf.get("thinking")
+                or ""
+            )
+    # The decision is at the end of the reasoning; return the tail.
+    return reasoning[-600:]
+
+
 def parse_multiclass_label(content: str) -> str:
-    """Map raw model output to one of MULTICLASS_LABELS, defaulting to OTHER."""
+    """Map raw model output to one of MULTICLASS_LABELS, defaulting to OTHER.
+
+    For reasoning traces the label is at the end, so scan from the tail and take
+    the LAST category mentioned rather than the first.
+    """
     up = (content or "").strip().upper()
-    # Check the specific categories before OTHER so 'OTHER' isn't masked.
-    for name in CATEGORY_NAMES:
-        if name in up:
-            return name
-    return OTHER
+    # Whichever label appears LAST wins (the conclusion of a reasoning trace).
+    # OTHER competes on position too, so a trace that weighs the real categories
+    # and then concludes OTHER resolves correctly.
+    last_pos, last_name = -1, OTHER
+    for name in MULTICLASS_LABELS:           # includes OTHER
+        idx = up.rfind(name)
+        if idx > last_pos:
+            last_pos, last_name = idx, name
+    return last_name
 
 
 def parse_binary_label(content: str, category: str) -> str:
-    """Map raw binary output to {category} or NON_{category}, defaulting negative."""
+    """Map raw binary output to {category} or NON_{category}, defaulting negative.
+
+    Scan from the tail: NON_<cat> contains <cat>, so we compare the last position
+    of each and let whichever appears later win.
+    """
     up = (content or "").strip().upper()
     neg = f"NON_{category}"
-    neg_spaced = f"NON {category}"
-    if neg in up or neg_spaced in up:
+    neg_idx = max(up.rfind(neg), up.rfind(f"NON {category}"))
+    # Position of a *standalone* positive: find <category> not preceded by "NON".
+    pos_idx = -1
+    start = 0
+    while True:
+        i = up.find(category, start)
+        if i == -1:
+            break
+        preceding = up[max(0, i - 4):i]
+        if "NON" not in preceding:
+            pos_idx = i
+        start = i + 1
+    if neg_idx > pos_idx:
         return neg
-    if category in up:
+    if pos_idx >= 0:
         return category
     return neg
