@@ -41,7 +41,18 @@ MODELS = [
     "hosted_vllm/RedHatAI/Mistral-Small-3.2-24B-Instruct-2506-FP8",
     "hosted_vllm/RedHatAI/gemma-3-27b-it-quantized.w4a16",
     "hosted_vllm/google/gemma-4-E4B-it",
+    # Additional small / fast models requested for the speed-vs-quality tradeoff.
+    # Names must exactly match the team allowlist on the LiteLLM endpoint.
+    "hosted_vllm/ibm-granite/granite-4.1-3b",
+    "hosted_vllm/Qwen/Qwen3.6-35B-A3B-FP8",
+    "hosted_vllm/Microsoft/Phi-4-mini-instruct",
+    "hosted_vllm/Qwen/Qwen3.5-9B",
 ]
+
+# Multi-class already won decisively, so by default new models are run with
+# multi-class only (skips the 3x-cost binary pass). Set to False to also run
+# binary for every model.
+MULTICLASS_ONLY = True
 
 # Conflict resolution for the binary strategy: if several binaries fire,
 # the earliest category in this order wins. All-negative -> OTHER.
@@ -131,7 +142,7 @@ def main():
             bin_pred_key = f"{m}__binary_pred"
             bin_lat_key  = f"{m}__binary_latency_sec"
             bin_raw_key  = f"{m}__binary_raw"
-            if bin_pred_key not in row:
+            if not MULTICLASS_ONLY and bin_pred_key not in row:
                 try:
                     pred, lat, raw = run_binary(model, text)
                     row[bin_pred_key] = pred
