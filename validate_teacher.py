@@ -28,7 +28,7 @@ BASE_URL         = "https://litellm.professor-x.de/v1"
 
 # Frontier model(s) to validate the gpt-oss teacher against.
 VALIDATOR_MODELS = [
-    "hosted_vllm/Kimi-K2.6",
+    "hosted_vllm/moonshotai/Kimi-K2.6",
 ]
 
 client = OpenAI(api_key=os.environ["LSX_API_KEY"], base_url=BASE_URL)
@@ -52,9 +52,29 @@ def label(model: str, text: str) -> str:
     return parse_multiclass_label(resp.choices[0].message.content)
 
 
+def preflight(models):
+    """Ping each model once; drop any that are inaccessible so we don't waste
+    2000 calls discovering a bad name / permission error."""
+    ok = []
+    for model in models:
+        try:
+            label(model, "Test.")
+            ok.append(model)
+            print(f"  [ok]   {model}")
+        except Exception as e:
+            msg = str(e)
+            print(f"  [SKIP] {model}: {msg[:160]}")
+    return ok
+
+
 def main():
     with open(INPUT_PATH, "r", encoding="utf-8") as f:
         rows = [json.loads(l) for l in f if l.strip()]
+
+    print("Pre-flight model check...")
+    models = preflight(VALIDATOR_MODELS)
+    if not models:
+        raise SystemExit("No accessible validator models. Check names / allowlist.")
 
     # Resume: reload prior validation output keyed by id.
     existing = {}
@@ -69,7 +89,7 @@ def main():
     for i, row in enumerate(rows, 1):
         row = existing.get(row["id"], row)
         text = (row.get("text") or "").strip()
-        for model in VALIDATOR_MODELS:
+        for model in models:
             key = f"{safe_name(model)}_label"
             if key in row or not text:
                 continue
@@ -88,7 +108,7 @@ def main():
     # --- Agreement report + disagreement dump ---
     disagreements = []
     print("\n=== Agreement with gpt-oss gold_label ===")
-    for model in VALIDATOR_MODELS:
+    for model in models:
         key = f"{safe_name(model)}_label"
         labeled = [r for r in out_rows if key in r]
         if not labeled:
