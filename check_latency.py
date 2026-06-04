@@ -36,14 +36,21 @@ def stats(xs):
 
 for m in prefixes:
     mc = stats([r.get(f"{m}__multiclass_latency_sec") for r in rows])
-    # binary total covers 3 calls; divide to get per-call model speed
-    bin_total = [r.get(f"{m}__binary_latency_sec") for r in rows]
-    bin_percall = stats([t / 3 for t in bin_total if t is not None])
+    # binary total = the 3 category calls summed (the true per-doc cost)
+    bin_total = stats([r.get(f"{m}__binary_latency_sec") for r in rows])
+    # ...and divided by 3 for a per-call model-speed comparison
+    bin_percall = stats([
+        r.get(f"{m}__binary_latency_sec") / 3
+        for r in rows if r.get(f"{m}__binary_latency_sec") is not None
+    ])
     print("=" * 70)
     print(m)
-    print(f"  multiclass (1 call/doc):  "
+    print(f"  multiclass (1 call/doc):     "
           f"mean={mc['mean']:.3f}  median={mc['median']:.3f}  "
           f"p90={mc['p90']:.3f}  max={mc['max']:.3f}")
-    print(f"  binary    (per-call):     "
+    print(f"  binary TOTAL (3 calls/doc):  "
+          f"mean={bin_total['mean']:.3f}  median={bin_total['median']:.3f}  "
+          f"p90={bin_total['p90']:.3f}  max={bin_total['max']:.3f}")
+    print(f"  binary per-call:             "
           f"mean={bin_percall['mean']:.3f}  median={bin_percall['median']:.3f}  "
           f"p90={bin_percall['p90']:.3f}  max={bin_percall['max']:.3f}")
