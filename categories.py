@@ -173,3 +173,46 @@ def parse_binary_label(content: str, category: str) -> str:
     if pos_idx >= 0:
         return category
     return neg
+
+
+# ---------------------------------------------------------------------------
+# Multi-LABEL strategy: a document may belong to several categories at once
+# (e.g. a cyberattack on a hospital -> MEDICAL + CYBERSECURITY). OTHER is
+# treated as EXCLUSIVE: it applies only when no real category does.
+# ---------------------------------------------------------------------------
+
+def multilabel_system_prompt() -> str:
+    """System prompt for the multi-label classifier (zero or more categories)."""
+    lines = [
+        "You are a strict topical classifier for German web documents.",
+        "A document may belong to MULTIPLE of the following categories at once. "
+        "List EVERY category that is a substantial topic of the document "
+        "(not just a passing mention):",
+        "",
+    ]
+    for name, spec in CATEGORIES.items():
+        lines.append(f"{name}: {spec['definition']}")
+    lines += [
+        "",
+        f"If none of these categories substantially apply, respond with {OTHER}.",
+        "Do NOT combine OTHER with a real category — use OTHER only on its own.",
+        "",
+        "Respond with the applicable category names separated by commas, e.g. "
+        f"'MEDICAL, CYBERSECURITY' or a single '{OTHER}'. No explanation.",
+    ]
+    return "\n".join(lines)
+
+
+def parse_multilabel(content: str) -> frozenset:
+    """Map raw output to a set of category labels.
+
+    Returns a frozenset of real CATEGORY_NAMES, or frozenset({OTHER}) if none
+    apply. Substring-scans for each category name so it is robust to reasoning
+    traces and varied formatting. OTHER is exclusive: dropped if any real
+    category is present.
+    """
+    up = (content or "").upper()
+    found = {name for name in CATEGORY_NAMES if name in up}
+    if found:
+        return frozenset(found)
+    return frozenset({OTHER})
