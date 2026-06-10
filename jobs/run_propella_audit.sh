@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=propella_audit
-#SBATCH --partition=standard
-#SBATCH --time=04:00:00
+#SBATCH --partition=large_cpu
+#SBATCH --time=48:00:00
 #SBATCH --mem=16G
 #SBATCH --cpus-per-task=4
 #SBATCH --output=jobs/logs/%x_%j.out
