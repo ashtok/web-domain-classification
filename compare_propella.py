@@ -3,31 +3,31 @@
 Cross-check our LLM topic labels against the independent propella annotations.
 
 propella (openeurollm/propella-annotations, name="fineweb-2", split="deu_Latn")
-annotates the SAME FineWeb-2 corpus with, among other things, a `business_sector`
-field (a list of sectors, e.g. healthcare_medical, pharmaceutical_biotech). We
-join it to our 2000 benchmark docs by document `id`, map propella sectors to our
-categories, and measure agreement.
+annotates the SAME FineWeb-2 corpus with a `business_sector` field (a list of
+sectors). We join it to our 2000 benchmark docs by `id`, map propella sectors to
+our categories with an EXACT-NAME mapping (defensible, one sector -> one
+category), and measure agreement (Cohen's kappa + raw agreement).
 
-No LLM calls — pure data join, so it runs fine while the inference API is down.
+No LLM calls -- pure data join, so it runs while the inference API is down.
 
-Reads : benchmark.jsonl                 (our gold_label per id)
-        openeurollm/propella-annotations (streamed, indexed by id)
-Writes : propella_comparison.csv          (per-category precision/recall + kappa)
-         propella_joined.jsonl            (joined rows for inspection)
+Modes:
+  (default)        stream propella, join, cache raw sectors, then score.
+  --remap          re-score from the cached propella_joined.jsonl WITHOUT
+                   re-streaming (instant; use after editing SECTOR_MAP).
 
-Because propella is BUSINESS SECTORS, MEDICAL maps cleanly; CYBERSECURITY and
-CLIMATE may have no corresponding sector -> the comparison may only be
-meaningful for MEDICAL. The script prints the full sector vocabulary so the
-mapping below can be refined after seeing what actually exists.
+Outputs:
+  propella_joined.jsonl       per-id: our_label + raw propella sectors (cache)
+  propella_comparison.csv     short summary: one row per category
 """
 import json
 import os
+import sys
+import gc
 from collections import Counter
 
-from datasets import load_dataset
 from sklearn.metrics import cohen_kappa_score, precision_recall_fscore_support
 
-from categories import CATEGORY_NAMES, OTHER
+from categories import CATEGORY_NAMES
 
 BENCHMARK_PATH = "benchmark.jsonl"
 JOINED_PATH    = "propella_joined.jsonl"
@@ -36,60 +36,62 @@ RESULTS_CSV    = "propella_comparison.csv"
 PROPELLA_NAME  = "fineweb-2"
 PROPELLA_SPLIT = "deu_Latn"
 
-# Substring rules mapping a propella business_sector -> our category.
-# Refine these after the printed sector vocabulary shows what really exists.
-SECTOR_RULES = {
-    "MEDICAL":       ["health", "medic", "pharma", "biotech", "hospital", "clinic"],
-    "CYBERSECURITY": ["security", "cyber", "information_tech", "software", "it_"],
-    "CLIMATE":       ["climate", "environment", "energy", "renewable", "sustainab"],
+# EXACT propella business_sector names -> our category. Tightest defensible map.
+# (energy_utilities deliberately EXCLUDED from CLIMATE: it includes non-climate
+#  energy such as grid/oil/gas; environmental_services is the clean match.)
+SECTOR_MAP = {
+    "MEDICAL":       {"healthcare_medical", "pharmaceutical_biotech"},
+    "CYBERSECURITY": {"security_cyber"},
+    "CLIMATE":       {"environmental_services"},
 }
 
 
 def sector_to_categories(sectors) -> set:
     """Map a doc's list of propella sectors to the set of our categories it hits."""
-    cats = set()
-    joined = " ".join(s.lower() for s in sectors)
-    for cat, needles in SECTOR_RULES.items():
-        if any(n in joined for n in needles):
-            cats.add(cat)
-    return cats
+    secs = {s.lower() for s in sectors}
+    return {cat for cat, names in SECTOR_MAP.items() if secs & names}
 
 
-def main():
+def stream_and_cache():
+    """Stream propella, match our benchmark ids, cache raw sectors to JOINED_PATH."""
+    from datasets import load_dataset
+
     with open(BENCHMARK_PATH, "r", encoding="utf-8") as f:
-        bench = {json.loads(l)["id"]: json.loads(l)
-                 for l in (line for line in f if line.strip())}
+        bench = {}
+        for line in f:
+            if line.strip():
+                r = json.loads(line)
+                bench[r["id"]] = r["gold_label"]
     want_ids = set(bench)
     print(f"Benchmark docs: {len(want_ids)}")
 
-    print("Streaming propella to find matching ids (this can take a while)...")
+    print("Streaming propella to find matching ids...")
     ds = load_dataset(
         "openeurollm/propella-annotations",
-        name=PROPELLA_NAME,
-        split=PROPELLA_SPLIT,
-        streaming=True,
+        name=PROPELLA_NAME, split=PROPELLA_SPLIT, streaming=True,
     )
 
-    matched = {}
-    sector_vocab = Counter()
-    scanned = 0
-    for row in ds:
-        scanned += 1
-        rid = row.get("id")
-        if rid in want_ids and rid not in matched:
-            sectors = row.get("business_sector") or []
-            if isinstance(sectors, str):
-                sectors = [sectors]
-            matched[rid] = {
-                "business_sector": sectors,
-                "one_sentence_description": row.get("one_sentence_description", ""),
-            }
-            sector_vocab.update(s.lower() for s in sectors)
-        if scanned % 500_000 == 0:
-            print(f"  scanned {scanned:,}, matched {len(matched)}/{len(want_ids)}")
-        if len(matched) == len(want_ids):
-            print("  all ids matched, stopping early.")
-            break
+    matched, sector_vocab, scanned = {}, Counter(), 0
+    try:
+        for row in ds:
+            scanned += 1
+            rid = row.get("id")
+            if rid in want_ids and rid not in matched:
+                sectors = row.get("business_sector") or []
+                if isinstance(sectors, str):
+                    sectors = [sectors]
+                matched[rid] = sectors
+                sector_vocab.update(s.lower() for s in sectors)
+            if scanned % 500_000 == 0:
+                print(f"  scanned {scanned:,}, matched {len(matched)}/{len(want_ids)}")
+            if len(matched) == len(want_ids):
+                print("  all ids matched, stopping early.")
+                break
+    finally:
+        # Close the streaming reader cleanly so its prefetch thread doesn't
+        # retry against closed fds during interpreter shutdown.
+        del ds
+        gc.collect()
 
     print(f"\nJoin coverage: {len(matched)}/{len(want_ids)} "
           f"({len(matched)/len(want_ids):.1%}) after scanning {scanned:,} rows")
@@ -100,53 +102,62 @@ def main():
     for sec, n in sector_vocab.most_common(40):
         print(f"  {n:5}  {sec}")
 
-    # Build joined records + per-category binary vectors.
-    joined = []
-    for rid, prop in matched.items():
-        b = bench[rid]
-        prop_cats = sector_to_categories(prop["business_sector"])
-        joined.append({
-            "id": rid,
-            "our_label": b["gold_label"],
-            "propella_sectors": prop["business_sector"],
-            "propella_cats": sorted(prop_cats),
-        })
-
     with open(JOINED_PATH, "w", encoding="utf-8") as f:
-        for r in joined:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        for rid, sectors in matched.items():
+            f.write(json.dumps({
+                "id": rid,
+                "our_label": bench[rid],
+                "propella_sectors": sectors,
+            }, ensure_ascii=False) + "\n")
+    print(f"\nCached {len(matched)} joined rows to {JOINED_PATH}")
 
-    # Per-category agreement: treat as one-vs-rest.
-    #   ours_pos     = our single-label gold == this category
-    #   propella_pos = this category is in propella's mapped sectors
-    print("\n=== Per-category agreement (our label vs propella sector mapping) ===")
+
+def score():
+    """Score our labels vs propella mapping from the cached JOINED_PATH."""
+    if not os.path.exists(JOINED_PATH):
+        raise SystemExit(f"{JOINED_PATH} not found. Run without --remap first.")
+    with open(JOINED_PATH, "r", encoding="utf-8") as f:
+        rows = [json.loads(l) for l in f if l.strip()]
+
+    print(f"\n=== Agreement (our label vs propella sector mapping) ===")
+    print("Mapping:")
+    for cat, names in SECTOR_MAP.items():
+        print(f"  {cat:14} <- {', '.join(sorted(names))}")
+    print()
+
     results = []
     for cat in CATEGORY_NAMES:
-        ours = [1 if r["our_label"] == cat else 0 for r in joined]
-        prop = [1 if cat in r["propella_cats"] else 0 for r in joined]
+        ours = [1 if r["our_label"] == cat else 0 for r in rows]
+        prop = [1 if cat in sector_to_categories(r["propella_sectors"]) else 0
+                for r in rows]
         if sum(prop) == 0:
             print(f"{cat:14} propella has NO mapped sector -> not comparable")
-            results.append({"category": cat, "comparable": False})
+            results.append({"category": cat, "comparable": False, "n": len(rows)})
             continue
         kappa = cohen_kappa_score(ours, prop)
-        # Precision/recall of propella-positive as a predictor of our label.
-        p, r_, f1, _ = precision_recall_fscore_support(
-            ours, prop, average="binary", zero_division=0
-        )
-        agree = sum(1 for a, b2 in zip(ours, prop) if a == b2) / len(ours)
+        p, rec, f1, _ = precision_recall_fscore_support(
+            ours, prop, average="binary", zero_division=0)
+        agree = sum(1 for a, b in zip(ours, prop) if a == b) / len(rows)
         print(f"{cat:14} kappa={kappa:.3f}  agreement={agree:.1%}  "
-              f"( our_pos={sum(ours)}, propella_pos={sum(prop)})")
+              f"(our_pos={sum(ours)}, propella_pos={sum(prop)})")
         results.append({
-            "category": cat, "comparable": True, "n": len(joined),
-            "cohen_kappa": kappa, "agreement": agree,
+            "category": cat, "comparable": True, "n": len(rows),
+            "cohen_kappa": round(kappa, 4), "agreement": round(agree, 4),
             "our_positive": sum(ours), "propella_positive": sum(prop),
-            "precision": p, "recall": r_, "f1": f1,
+            "precision": round(p, 4), "recall": round(rec, 4), "f1": round(f1, 4),
         })
 
     import pandas as pd
     pd.DataFrame(results).to_csv(RESULTS_CSV, index=False)
-    print(f"\nSaved per-category scores to {RESULTS_CSV}")
-    print(f"Joined rows written to {JOINED_PATH}")
+    print(f"\nSaved summary to {RESULTS_CSV}")
+
+
+def main():
+    if "--remap" not in sys.argv:
+        stream_and_cache()
+    else:
+        print("--remap: scoring from cache, not re-streaming.")
+    score()
 
 
 if __name__ == "__main__":
