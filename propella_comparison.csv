@@ -1,0 +1,4 @@
+category,comparable,n,cohen_kappa,agreement,our_positive,propella_positive,precision,recall,f1
+MEDICAL,True,2000,0.9467,0.98,500,502,0.9582,0.962,0.9601
+CYBERSECURITY,True,2000,0.8863,0.9595,500,425,0.9929,0.844,0.9124
+CLIMATE,True,2000,0.8375,0.9425,500,415,0.9639,0.8,0.8743

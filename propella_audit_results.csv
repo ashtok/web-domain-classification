@@ -1,0 +1,5 @@
+propella_sector,expected_category,n,agree,reject,reject_rate
+healthcare_medical,MEDICAL,1000,719,281,0.281
+pharmaceutical_biotech,MEDICAL,1000,678,322,0.322
+security_cyber,CYBERSECURITY,1000,653,347,0.347
+environmental_services,CLIMATE,1000,405,595,0.595
